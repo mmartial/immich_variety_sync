@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+venv/
+env/
+
+# Environment Variables
+.env
+
+# Database
+assets.db
+
+# macOS
+.DS_Store
+
+# Testing
+wallpapers/
