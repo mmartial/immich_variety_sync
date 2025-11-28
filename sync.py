@@ -24,8 +24,9 @@ MAX_LOCAL_GB = float(os.getenv("MAX_LOCAL_GB", 0)) # 0 = Unlimited
 HEADERS = {"x-api-key": API_KEY, "Accept": "application/json"}
 
 def get_assets():
-    """Fetches all valid asset objects from Immich."""
+    """Fetches all valid asset objects from Immich. Returns (assets, has_error)."""
     assets = {}
+    has_error = False
     
     # Fetch Albums
     for album in ALBUM_IDS:
@@ -39,10 +40,12 @@ def get_assets():
                     assets[item['id']] = item
             else:
                 print(f" [Sync] Error fetching album {album}: {r.status_code} {r.text}")
+                has_error = True
         except Exception as e:
             print(f" [Sync] Error fetching album {album}: {e}")
+            has_error = True
             
-    return assets
+    return assets, has_error
 
 def get_filename(asset):
     """Returns the filename for an asset: <original_name>-<id>.<ext>"""
@@ -137,7 +140,7 @@ def sync_loop(once=False):
         
     while True:
         print(f"--- Starting Sync at {time.ctime()} ---")
-        assets = get_assets()
+        assets, has_error = get_assets()
         
         # 0. Identify Orphans & Protected Files
         valid_asset_ids = set(assets.keys())
@@ -151,22 +154,25 @@ def sync_loop(once=False):
         
         local_files = os.listdir(DOWNLOAD_PATH)
         
-        for f in local_files:
-            if f.startswith('.'): continue
-            
-            # Orphan check
-            is_valid = False
-            for aid in valid_asset_ids:
-                if aid in f: 
-                    is_valid = True
-                    break
-            
-            if not is_valid:
-                print(f" [Cleanup] Removing orphan {f} (not found in current Immich assets)")
-                try:
-                    os.remove(os.path.join(DOWNLOAD_PATH, f))
-                except:
-                    pass
+        if not has_error:
+            for f in local_files:
+                if f.startswith('.'): continue
+                
+                # Orphan check
+                is_valid = False
+                for aid in valid_asset_ids:
+                    if aid in f: 
+                        is_valid = True
+                        break
+                
+                if not is_valid:
+                    print(f" [Cleanup] Removing orphan {f} (not found in current Immich assets)")
+                    try:
+                        os.remove(os.path.join(DOWNLOAD_PATH, f))
+                    except:
+                        pass
+        else:
+            print(" [Cleanup] Skipping orphan removal due to fetch errors.")
 
         # 1. Select Assets to Download
         if ALBUMS_FAVORITES:
