@@ -76,6 +76,7 @@ def resize_and_pad(image_content, target_size_str, filename="Image"):
         
         # Log original details
         original_size = img.size
+        original_format = img.format
         exif = img.getexif()
         orientation = exif.get(0x0112)
         
@@ -132,7 +133,11 @@ def resize_and_pad(image_content, target_size_str, filename="Image"):
         # Save to bytes
         output = BytesIO()
         # Preserve format if possible, default to JPEG if not
-        fmt = img.format if img.format else 'JPEG'
+        fmt = original_format if original_format else 'JPEG'
+        
+        if fmt.upper() in ('JPEG', 'JPG') and bg_img.mode in ('RGBA', 'LA', 'P'):
+            bg_img = bg_img.convert('RGB')
+            
         bg_img.save(output, format=fmt, quality=95)
         return output.getvalue()
         
