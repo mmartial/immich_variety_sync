@@ -3,7 +3,7 @@ import time
 import requests
 import argparse
 import random
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 from io import BytesIO
 
 from dotenv import load_dotenv
@@ -59,7 +59,7 @@ def get_filename(asset):
     base = "".join(c for c in base if c.isalnum() or c in (' ', '-', '_')).strip()
     return f"{base}-{asset_id}{ext}"
 
-def resize_and_pad(image_content, target_size_str):
+def resize_and_pad(image_content, target_size_str, filename="Image"):
     """
     Resizes image to fit within target_size_str (WxH) and pads with blurred version.
     Returns bytes of the processed image.
@@ -73,6 +73,19 @@ def resize_and_pad(image_content, target_size_str):
 
     try:
         img = Image.open(BytesIO(image_content))
+        
+        # Log original details
+        original_size = img.size
+        exif = img.getexif()
+        orientation = exif.get(0x0112)
+        
+        rotation_msg = ""
+        if orientation and orientation != 1:
+            rotation_msg = f", EXIF Orientation: {orientation}"
+            
+        print(f" [Resize] {filename} Original: {original_size[0]}x{original_size[1]}{rotation_msg} -> {target_size_str}")
+
+        img = ImageOps.exif_transpose(img)
         
         # Calculate aspect ratios
         target_ratio = target_w / target_h
@@ -146,8 +159,7 @@ def download_asset(asset, target_dir):
         if r.status_code == 200:
             content = r.content
             if TARGET_SIZE:
-                print(f" [Download] Resizing {filename} to {TARGET_SIZE}...")
-                content = resize_and_pad(content, TARGET_SIZE)
+                content = resize_and_pad(content, TARGET_SIZE, filename)
                 
             with open(path, 'wb') as f:
                 f.write(content)
