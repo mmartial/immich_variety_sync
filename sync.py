@@ -3,6 +3,8 @@ import time
 import requests
 import argparse
 import random
+from PIL import Image, ImageFilter
+from io import BytesIO
 
 from dotenv import load_dotenv
 
@@ -20,6 +22,7 @@ SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", 600)) # 10 minutes
 RANDOM_SELECT = int(os.getenv("RANDOM_SELECT", 0)) # 0 = All
 MAX_IMAGES = int(os.getenv("MAX_IMAGES", 0)) # 0 = Unlimited
 MAX_LOCAL_GB = float(os.getenv("MAX_LOCAL_GB", 0)) # 0 = Unlimited
+TARGET_SIZE = os.getenv("TARGET_SIZE", "") # Format: "1920x1080"
 
 HEADERS = {"x-api-key": API_KEY, "Accept": "application/json"}
 
@@ -56,6 +59,75 @@ def get_filename(asset):
     base = "".join(c for c in base if c.isalnum() or c in (' ', '-', '_')).strip()
     return f"{base}-{asset_id}{ext}"
 
+def resize_and_pad(image_content, target_size_str):
+    """
+    Resizes image to fit within target_size_str (WxH) and pads with blurred version.
+    Returns bytes of the processed image.
+    """
+    try:
+        w_str, h_str = target_size_str.lower().split('x')
+        target_w, target_h = int(w_str), int(h_str)
+    except ValueError:
+        print(f" [Resize] Invalid TARGET_SIZE format: {target_size_str}. Skipping resize.")
+        return image_content
+
+    try:
+        img = Image.open(BytesIO(image_content))
+        
+        # Calculate aspect ratios
+        target_ratio = target_w / target_h
+        img_ratio = img.width / img.height
+        
+        # Determine new size for the main image
+        if img_ratio > target_ratio:
+            # Image is wider than target
+            new_w = target_w
+            new_h = int(target_w / img_ratio)
+        else:
+            # Image is taller than target
+            new_h = target_h
+            new_w = int(target_h * img_ratio)
+            
+        resized_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        
+        # Create background (blurred version of original, resized to cover)
+        # To cover, we need to scale so the smaller dimension matches the target
+        if img_ratio > target_ratio:
+            # Wider: scale height to match target height
+            bg_h = target_h
+            bg_w = int(target_h * img_ratio)
+        else:
+            # Taller: scale width to match target width
+            bg_w = target_w
+            bg_h = int(target_w / img_ratio)
+            
+        bg_img = img.resize((bg_w, bg_h), Image.Resampling.BICUBIC)
+        bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=20))
+        
+        # Center crop the background to target size
+        left = (bg_w - target_w) / 2
+        top = (bg_h - target_h) / 2
+        right = (bg_w + target_w) / 2
+        bottom = (bg_h + target_h) / 2
+        bg_img = bg_img.crop((left, top, right, bottom))
+        
+        # Paste resized image onto background
+        paste_x = (target_w - new_w) // 2
+        paste_y = (target_h - new_h) // 2
+        bg_img.paste(resized_img, (paste_x, paste_y))
+        
+        # Save to bytes
+        output = BytesIO()
+        # Preserve format if possible, default to JPEG if not
+        fmt = img.format if img.format else 'JPEG'
+        bg_img.save(output, format=fmt, quality=95)
+        return output.getvalue()
+        
+    except Exception as e:
+        print(f" [Resize] Error processing image: {e}")
+        return image_content
+
+
 def download_asset(asset, target_dir):
     """Downloads a single asset if it doesn't exist."""
     filename = get_filename(asset)
@@ -72,9 +144,13 @@ def download_asset(asset, target_dir):
     try:
         r = requests.get(f"{IMMICH_URL}/api/assets/{asset['id']}/original", headers=HEADERS, stream=True)
         if r.status_code == 200:
+            content = r.content
+            if TARGET_SIZE:
+                print(f" [Download] Resizing {filename} to {TARGET_SIZE}...")
+                content = resize_and_pad(content, TARGET_SIZE)
+                
             with open(path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                f.write(content)
             return True
         else:
             print(f" [Download] Failed to download {asset['id']}: {r.status_code}")
